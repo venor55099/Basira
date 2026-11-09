@@ -2,6 +2,7 @@ opencv-python-headless==4.8.1.78
 ultralytics==8.1.1
 streamlit
 numpy==1.26.4
-torch>=1.8.0
+torch==2.1.2
+torchvision==0.16.2
 pillow
 gTTS
