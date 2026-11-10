@@ -13,9 +13,9 @@ GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY
 
 # نماذج حقيقية من جوجل — الأسرع أولاً
 GEMINI_MODELS = [
-    "gemini-2.5-flash-lite",   # الأسرع والأخف
-    "gemini-2.0-flash-lite",   # احتياطي
-    "gemini-2.0-flash",        # احتياطي أخير
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash-lite",
+    "gemini-2.0-flash",
 ]
 
 @st.cache_resource
@@ -57,23 +57,22 @@ def describe_with_gemini(image, yolo_description):
                         )
                     )
                 except Exception:
-                    # لو إعداد التفكير مش مدعوم على النموذج، جرب بدونه
+                    # لو إعداد التفكير مش مدعوم، جرب بدونه
                     response = client.models.generate_content(
                         model=model_name,
                         contents=[prompt, image]
                     )
-                return response.text  # نجح
+                return response.text
             except Exception as e:
                 last_error = e
                 error_str = str(e)
-                # لو خطأ مؤقت (503/429)، استنى وحاول تاني
                 if "503" in error_str or "429" in error_str or "UNAVAILABLE" in error_str:
-                    time.sleep(2 ** attempt)  # 1، 2، 4 ثواني
+                    time.sleep(2 ** attempt)
                     continue
                 else:
-                    break  # خطأ دائم، جرب النموذج اللي بعده
+                    break
     
-    return f"الخدمة مشغولة حاليًا. جرب تاني بعد شوية."
+    return "الخدمة مشغولة حاليًا. جرب تاني بعد شوية."
 
 
 # --- واجهة Streamlit ---
@@ -88,10 +87,8 @@ if uploaded_file is not None:
     st.image(image, caption="الصورة اللي رفعتها", use_column_width=True)
 
     with st.spinner("بصيرة بيشوف الصورة..."):
-        # تصغير الصورة لتسريع YOLO (من 640 لـ 416)
-        image_for_yolo = image.resize((416, 416))
-        
-        results = model(image_for_yolo, verbose=False)[0]
+        # ⬅️ شيلنا تصغير الصورة — بنستخدم الصورة الأصلية
+        results = model(image, verbose=False)[0]
         names = [model.names[int(c)] for c in results.boxes.cls]
         unique = list(dict.fromkeys(names))
 
@@ -106,7 +103,6 @@ if uploaded_file is not None:
 
         st.success(final_description)
 
-        # تحويل النص لصوت
         tts = gTTS(text=final_description, lang='ar', slow=False)
         audio_bytes = io.BytesIO()
         tts.write_to_fp(audio_bytes)
