@@ -1,9 +1,6 @@
-opencv-python-headless
 ultralytics
 streamlit
 numpy
 torch
-torchvision
 pillow
 gTTS
-google-genai
