@@ -31,9 +31,9 @@ translations = {
 }
 
 def describe_with_gemini(image, yolo_description):
-    """تحسين وصف YOLO باستخدام Gemini مع تبديل النماذج عند الزحمة."""
+    """تحسين وصف YOLO باستخدام Gemini، مع خطة بديلة لو فشل."""
     if not GEMINI_API_KEY:
-        return "خطأ: مفتاح Gemini API غير موجود. تأكد من إعداده في Secrets."
+        return yolo_description  # لو مفيش مفتاح، استخدم YOLO بس
 
     client = genai.Client(api_key=GEMINI_API_KEY)
 
@@ -46,7 +46,6 @@ def describe_with_gemini(image, yolo_description):
     for model_name in GEMINI_MODELS:
         for attempt in range(2):
             try:
-                # المحاولة الأولى: مع إيقاف التفكير (أسرع)
                 try:
                     response = client.models.generate_content(
                         model=model_name,
@@ -56,21 +55,21 @@ def describe_with_gemini(image, yolo_description):
                         )
                     )
                 except Exception:
-                    # لو إعداد التفكير مش مدعوم، جرب بدونه
                     response = client.models.generate_content(
                         model=model_name,
                         contents=[prompt, image]
                     )
-                return response.text
+                return response.text  # نجح
             except Exception as e:
                 error_str = str(e)
                 if "503" in error_str or "429" in error_str or "UNAVAILABLE" in error_str:
-                    time.sleep(2 ** attempt)  # 1، 2 ثانية
+                    time.sleep(1)  # انتظار قصير
                     continue
                 else:
-                    break  # خطأ دائم، جرب النموذج اللي بعده
+                    break
 
-    return "الخدمة مشغولة جدًا حاليًا. جرب ترفع الصورة تاني بعد شوية."
+    # ⬅️ الخطة البديلة: نرجع وصف YOLO بس بدل ما نعلّق المستخدم
+    return yolo_description + " (الوصف التفصيلي غير متاح حاليًا)"
 
 
 # --- واجهة Streamlit ---
