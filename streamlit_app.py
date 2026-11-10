@@ -14,8 +14,8 @@ GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY
 # نماذج حقيقية من جوجل — الأسرع أولاً
 GEMINI_MODELS = [
     "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
     "gemini-2.0-flash-lite",
-    "gemini-2.0-flash",
 ]
 
 @st.cache_resource
@@ -31,21 +31,20 @@ translations = {
 }
 
 def describe_with_gemini(image, yolo_description):
-    """تحسين وصف YOLO باستخدام Gemini مع تسريع."""
+    """تحسين وصف YOLO باستخدام Gemini مع تبديل النماذج عند الزحمة."""
     if not GEMINI_API_KEY:
         return "خطأ: مفتاح Gemini API غير موجود. تأكد من إعداده في Secrets."
-    
+
     client = genai.Client(api_key=GEMINI_API_KEY)
-    
+
     prompt = f"""أنت مساعد بصري ذكي لمستخدم كفيف.
 وصف مبدئي من نظام كشف الأشياء: "{yolo_description}"
 حلل الصورة دي واديني وصف نهائي بالعربي، دقيق ومفيد.
 لو الوصف المبدئي فيه أخطاء (زي إنه قال ريموت بدل تليفون)، صححها.
 وصف المشهد ككل، مش بس الأشياء."""
 
-    last_error = None
     for model_name in GEMINI_MODELS:
-        for attempt in range(3):
+        for attempt in range(2):
             try:
                 # المحاولة الأولى: مع إيقاف التفكير (أسرع)
                 try:
@@ -64,15 +63,14 @@ def describe_with_gemini(image, yolo_description):
                     )
                 return response.text
             except Exception as e:
-                last_error = e
                 error_str = str(e)
                 if "503" in error_str or "429" in error_str or "UNAVAILABLE" in error_str:
-                    time.sleep(2 ** attempt)
+                    time.sleep(2 ** attempt)  # 1، 2 ثانية
                     continue
                 else:
-                    break
-    
-    return "الخدمة مشغولة حاليًا. جرب تاني بعد شوية."
+                    break  # خطأ دائم، جرب النموذج اللي بعده
+
+    return "الخدمة مشغولة جدًا حاليًا. جرب ترفع الصورة تاني بعد شوية."
 
 
 # --- واجهة Streamlit ---
@@ -87,7 +85,7 @@ if uploaded_file is not None:
     st.image(image, caption="الصورة اللي رفعتها", use_column_width=True)
 
     with st.spinner("بصيرة بيشوف الصورة..."):
-        # ⬅️ شيلنا تصغير الصورة — بنستخدم الصورة الأصلية
+        # YOLO على الصورة الأصلية
         results = model(image, verbose=False)[0]
         names = [model.names[int(c)] for c in results.boxes.cls]
         unique = list(dict.fromkeys(names))
@@ -103,6 +101,7 @@ if uploaded_file is not None:
 
         st.success(final_description)
 
+        # تحويل النص لصوت
         tts = gTTS(text=final_description, lang='ar', slow=False)
         audio_bytes = io.BytesIO()
         tts.write_to_fp(audio_bytes)
