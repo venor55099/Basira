@@ -13,12 +13,7 @@ GEMINI_KEYS = [
     st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY")),
     st.secrets.get("GEMINI_API_KEY_2", None),
 ]
-
-GEMINI_MODELS = [
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash-lite",
-    "gemini-2.5-flash",
-]
+GEMINI_MODELS = ["gemini-2.5-flash-lite", "gemini-2.0-flash-lite", "gemini-2.5-flash"]
 
 @st.cache_resource
 def load_model():
@@ -35,11 +30,9 @@ translations = {
     "banana": "موزة", "apple": "تفاحة", "orange": "برتقالة",
     "spoon": "معلقة", "fork": "شوكة", "knife": "سكينة",
     "bed": "سرير", "toilet": "حمام", "tv": "تليفزيون",
-    "microwave": "ميكروويف", "oven": "فرن", "sink": "حوض",
 }
 
 def text_to_speech(text):
-    """صوت باللهجة المصرية."""
     try:
         tts = gTTS(text=text, lang='ar', tld='com.eg', slow=False)
         audio_bytes = io.BytesIO()
@@ -50,20 +43,17 @@ def text_to_speech(text):
         return None
 
 def get_position(box, img_width, img_height):
-    """تحديد اتجاه الشيء."""
     x1, y1, x2, y2 = box.xyxy[0].tolist()
     cx = (x1 + x2) / 2
     cy = (y1 + y2) / 2
     nx = cx / img_width
     ny = cy / img_height
-
     if nx < 0.33:
         h = "على شمالك"
     elif nx > 0.67:
         h = "على يمينك"
     else:
         h = "قصادك"
-
     if ny < 0.30:
         return "فوق " + h
     elif ny > 0.70:
@@ -71,12 +61,10 @@ def get_position(box, img_width, img_height):
     return h
 
 def describe_with_gemini(image, yolo_description):
-    """تحسين الوصف بـ Gemini مع تبديل المفاتيح والنماذج."""
     prompt = f"""أنت مساعد بصري ذكي لمستخدم كفيف مصري.
 الوصف المبدئي من كشف الأشياء: "{yolo_description}"
 حلل الصورة واديني وصف نهائي بالعربي المصري، دقيق ومفيد.
 لو فيه أخطاء صححها. خلي الكلام طبيعي ومختصر."""
-
     for api_key in GEMINI_KEYS:
         if not api_key:
             continue
@@ -111,92 +99,166 @@ def describe_with_gemini(image, yolo_description):
     return None
 
 
-# ═══════════ واجهة Streamlit ═══════════
+# ═══════════ CSS الصحيح — الكاميرا ملء الشاشة ═══════════
 st.set_page_config(page_title="بصيرة", page_icon="👁️", layout="wide")
 
-# CSS: الكاميرا تاخد الشاشة كلها
 st.markdown("""
 <style>
-    /* إخفاء عناصر Streamlit الافتراضية */
-    #MainMenu, header, footer {visibility: hidden;}
-    .block-container {
+    /* ===== 1. إخفاء عناصر Streamlit ===== */
+    #MainMenu, header, footer,
+    [data-testid="stToolbar"],
+    [data-testid="stDecoration"],
+    [data-testid="stStatusWidget"] {
+        display: none !important;
+    }
+
+    /* ===== 2. تصفير كل الحشو والهوامش ===== */
+    html, body, .stApp {
         padding: 0 !important;
+        margin: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        overflow: hidden !important;
+    }
+    [data-testid="stAppViewContainer"],
+    [data-testid="stAppViewContainer"] > .main,
+    [data-testid="stAppViewContainer"] > .main > div,
+    .block-container,
+    [data-testid="stVerticalBlock"],
+    [data-testid="stHorizontalBlock"] {
+        padding: 0 !important;
+        margin: 0 !important;
         max-width: 100% !important;
-        margin: 0 !important;
-    }
-    div[data-testid="stAppViewContainer"] > .main {
-        padding: 0 !important;
+        width: 100% !important;
+        gap: 0 !important;
     }
 
-    /* الكاميرا تاخد الشاشة كلها */
-    div[data-testid="stCameraInput"] {
-        width: 100vw !important;
-        height: 100vh !important;
-        margin: 0 !important;
-        padding: 0 !important;
+    /* ===== 3. الكاميرا تاخد الشاشة كلها ===== */
+    [data-testid="stCameraInput"] {
         position: fixed !important;
-        top: 0; left: 0;
-        z-index: 1;
-    }
-    div[data-testid="stCameraInput"] > div {
+        top: 0 !important;
+        left: 0 !important;
         width: 100vw !important;
         height: 100vh !important;
-    }
-    div[data-testid="stCameraInput"] video {
-        width: 100vw !important;
-        height: 100vh !important;
-        object-fit: cover !important;
-    }
-
-    /* زرار الكاميرا يبقى كبير وواضح */
-    div[data-testid="stCameraInput"] button {
-        font-size: 1.4rem !important;
-        padding: 1rem 2rem !important;
+        max-width: 100vw !important;
+        max-height: 100vh !important;
+        margin: 0 !important;
+        padding: 0 !important;
         z-index: 10 !important;
-        position: relative;
+        background: #000 !important;
+        border: none !important;
+        border-radius: 0 !important;
     }
 
-    /* مربع النتيجة يظهر فوق الكاميرا */
+    /* كل عناصر الكاميرا الداخلية */
+    [data-testid="stCameraInput"] > div,
+    [data-testid="stCameraInput"] > div > div,
+    [data-testid="stCameraInput"] [data-testid="stVerticalBlock"] {
+        width: 100% !important;
+        height: 100% !important;
+        max-width: 100% !important;
+        max-height: 100% !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        gap: 0 !important;
+        border: none !important;
+        border-radius: 0 !important;
+        background: transparent !important;
+    }
+
+    /* الفيديو والـcanvas يغطوا الشاشة */
+    [data-testid="stCameraInput"] video,
+    [data-testid="stCameraInput"] canvas,
+    [data-testid="stCameraInput"] img {
+        width: 100vw !important;
+        height: 100vh !important;
+        max-width: 100vw !important;
+        max-height: 100vh !important;
+        object-fit: cover !important;
+        display: block !important;
+        border: none !important;
+        border-radius: 0 !important;
+    }
+
+    /* ===== 4. زرار التصوير — كبير وواضح في النص تحت ===== */
+    [data-testid="stCameraInput"] button {
+        position: fixed !important;
+        bottom: 140px !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        z-index: 9999 !important;
+        font-size: 1.4rem !important;
+        font-weight: bold !important;
+        padding: 1rem 2.5rem !important;
+        border-radius: 50px !important;
+        background: #28a745 !important;
+        color: #fff !important;
+        border: 3px solid #fff !important;
+        box-shadow: 0 4px 25px rgba(0,0,0,0.7) !important;
+        cursor: pointer !important;
+    }
+
+    /* ===== 5. صندوق النتيجة فوق الكاميرا ===== */
     .result-box {
         position: fixed !important;
-        bottom: 20px; left: 20px; right: 20px;
-        z-index: 9999 !important;
-        font-size: 1.6rem;
-        padding: 1.2rem;
-        background-color: rgba(212, 237, 218, 0.97);
-        border-radius: 15px;
-        border: 3px solid #28a745;
-        text-align: center;
-        line-height: 1.6;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        bottom: 20px !important;
+        left: 15px !important;
+        right: 15px !important;
+        z-index: 9998 !important;
+        font-size: 1.5rem !important;
+        padding: 1rem !important;
+        background: rgba(212, 237, 218, 0.97) !important;
+        border: 3px solid #28a745 !important;
+        border-radius: 15px !important;
+        text-align: center !important;
+        line-height: 1.5 !important;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.4) !important;
     }
 
-    /* مربع الترحيب */
+    /* ===== 6. صندوق الترحيب فوق ===== */
     .welcome-box {
         position: fixed !important;
-        top: 20px; left: 20px; right: 20px;
-        z-index: 9999 !important;
-        font-size: 1.3rem;
-        padding: 1rem;
-        background-color: rgba(227, 242, 253, 0.97);
-        border-radius: 10px;
-        text-align: center;
-        border: 2px solid #2196f3;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+        top: 15px !important;
+        left: 15px !important;
+        right: 15px !important;
+        z-index: 9998 !important;
+        font-size: 1.2rem !important;
+        padding: 0.8rem 1rem !important;
+        background: rgba(227, 242, 253, 0.97) !important;
+        border: 2px solid #2196f3 !important;
+        border-radius: 10px !important;
+        text-align: center !important;
+    }
+
+    /* ===== 7. إخفاء مشغل الصوت بصريًا مع الحفاظ على عمله ===== */
+    [data-testid="stAudio"] {
+        position: fixed !important;
+        bottom: -200px !important;
+        left: -200px !important;
+        width: 1px !important;
+        height: 1px !important;
+        overflow: hidden !important;
+        opacity: 0.01 !important;
+    }
+
+    /* ===== 8. السبينر مخفي خلف الكاميرا ===== */
+    [data-testid="stSpinner"] {
+        z-index: 5 !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ترحيب مرة واحدة
+
+# ═══════════ الترحيب (مرة واحدة) ═══════════
 if "welcomed" not in st.session_state:
-    welcome_text = "أهلاً بيك في بصيرة. اضغط على زرار الكاميرا، وصور أي حاجة قدامك، وأنا هقولك هي إيه وفين."
+    welcome_text = "أهلاً بيك في بصيرة. اضغط على الزرار الأخضر في النص، وصور أي حاجة قدامك، وأنا هقولك هي إيه وفين."
     welcome_audio = text_to_speech(welcome_text)
     if welcome_audio:
         st.audio(welcome_audio, format='audio/mp3', autoplay=True)
     st.markdown(f'<div class="welcome-box">{welcome_text}</div>', unsafe_allow_html=True)
     st.session_state.welcomed = True
 
-# الكاميرا (ملء الشاشة بـ CSS)
+# ═══════════ الكاميرا (ملء الشاشة) ═══════════
 camera_image = st.camera_input("صور", label_visibility="collapsed")
 
 if camera_image is not None:
@@ -204,31 +266,30 @@ if camera_image is not None:
     if image.mode != 'RGB':
         image = image.convert('RGB')
 
-    with st.spinner("بصيرة بيشوف الصورة..."):
-        results = model(image, verbose=False, conf=0.15)[0]
-        img_w, img_h = image.size
+    results = model(image, verbose=False, conf=0.15)[0]
+    img_w, img_h = image.size
 
-        seen = {}
-        for box in results.boxes:
-            cls_id = int(box.cls.item())
-            name = model.names[cls_id]
-            if name in seen:
-                continue
-            position = get_position(box, img_w, img_h)
-            arabic_name = translations.get(name, name)
-            seen[name] = f"{arabic_name} {position}"
+    seen = {}
+    for box in results.boxes:
+        cls_id = int(box.cls.item())
+        name = model.names[cls_id]
+        if name in seen:
+            continue
+        position = get_position(box, img_w, img_h)
+        arabic_name = translations.get(name, name)
+        seen[name] = f"{arabic_name} {position}"
 
-        if not seen:
-            yolo_description = "مش شايف حاجة واضحة. جرب تصور تاني وإضاءة أحسن."
-        else:
-            yolo_description = "أنا شايف: " + "، و".join(seen.values())
+    if not seen:
+        yolo_description = "مش شايف حاجة واضحة. جرب تصور تاني وإضاءة أحسن."
+    else:
+        yolo_description = "أنا شايف: " + "، و".join(seen.values())
 
-        final_description = describe_with_gemini(image, yolo_description)
-        if final_description is None:
-            final_description = yolo_description
+    final_description = describe_with_gemini(image, yolo_description)
+    if final_description is None:
+        final_description = yolo_description
 
-        st.markdown(f'<div class="result-box">{final_description}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="result-box">{final_description}</div>', unsafe_allow_html=True)
 
-        result_audio = text_to_speech(final_description)
-        if result_audio:
-            st.audio(result_audio, format='audio/mp3', autoplay=True)
+    result_audio = text_to_speech(final_description)
+    if result_audio:
+        st.audio(result_audio, format='audio/mp3', autoplay=True)
