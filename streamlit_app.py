@@ -1,31 +1,48 @@
 import streamlit as st
+from streamlit_camera_input_live import camera_input_live
 from ultralytics import YOLO
 from PIL import Image
-from gtts import gTTS
 import io
 import os
 import time
-from google import genai
-from google.genai import types
+from cairo_tts import CairoTTS
+from gemini_flux import GeminiFlux
+import soundfile as sf
 
-# --- إعداد Gemini (مفتاحين احتياطيين) ---
-GEMINI_KEYS = [
-    st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY")),
-    st.secrets.get("GEMINI_API_KEY_2", None),
-]
+# --- 1. إعداد Gemini (مع مفاتيح متعددة) ---
+# يتم تحميل المفاتيح من إعدادات Secrets في Streamlit Cloud
+GEMINI_KEYS = []
+i = 1
+while f"GEMINI_KEY_{i}" in st.secrets:
+    GEMINI_KEYS.append(st.secrets[f"GEMINI_KEY_{i}"])
+    i += 1
 
-GEMINI_MODELS = [
-    "gemini-2.5-flash-lite",
-    "gemini-2.0-flash-lite",
-    "gemini-2.5-flash",
-]
-
+# تهيئة مدير المفاتيح (يتم مرة واحدة فقط)
 @st.cache_resource
-def load_model():
+def load_gemini_flux():
+    if not GEMINI_KEYS:
+        return None
+    # "both" تعني أنه سيوزع الطلبات على كل المفاتيح والنماذج المتاحة
+    return GeminiFlux(keys=GEMINI_KEYS, mode="both")
+
+flux = load_gemini_flux()
+
+# --- 2. تحميل نموذج YOLO (مرة واحدة) ---
+@st.cache_resource
+def load_yolo_model():
     return YOLO('yolov8n.pt')
 
-model = load_model()
+model = load_yolo_model()
 
+# --- 3. تحميل محرك الصوت المصري (مرة واحدة) ---
+@st.cache_resource
+def load_tts_model():
+    # التحميل على المعالج (CPU) لأنه أسرع وأكثر استقرارًا على السيرفرات المجانية
+    return CairoTTS.from_pretrained("mohammedaly22/Cairo-TTS", device="cpu")
+
+tts = load_tts_model()
+
+# --- 4. قاموس الترجمة العربية ---
 translations = {
     "person": "شخص", "chair": "كرسي", "cup": "كوباية",
     "cell phone": "موبايل", "book": "كتاب", "bottle": "إزازة",
@@ -35,20 +52,9 @@ translations = {
     "banana": "موزة", "apple": "تفاحة", "orange": "برتقالة",
     "spoon": "معلقة", "fork": "شوكة", "knife": "سكينة",
     "bed": "سرير", "toilet": "حمام", "tv": "تليفزيون",
-    "microwave": "ميكروويف", "oven": "فرن", "sink": "حوض",
 }
 
-def text_to_speech(text):
-    """صوت باللهجة المصرية (tld=com.eg)."""
-    try:
-        tts = gTTS(text=text, lang='ar', tld='com.eg', slow=False)
-        audio_bytes = io.BytesIO()
-        tts.write_to_fp(audio_bytes)
-        audio_bytes.seek(0)
-        return audio_bytes
-    except Exception:
-        return None
-
+# --- 5. دالة تحديد الاتجاهات ---
 def get_position(box, img_width, img_height):
     """تحديد اتجاه الشيء (يمين/شمال/فوق/تحت/قصاد)."""
     x1, y1, x2, y2 = box.xyxy[0].tolist()
@@ -57,7 +63,6 @@ def get_position(box, img_width, img_height):
     nx = cx / img_width
     ny = cy / img_height
 
-    # الاتجاه الأفقي
     if nx < 0.33:
         h = "على شمالك"
     elif nx > 0.67:
@@ -65,113 +70,94 @@ def get_position(box, img_width, img_height):
     else:
         h = "قصادك"
 
-    # الاتجاه الرأسي (بس لو مش في النص)
     if ny < 0.30:
         return "فوق " + h
     elif ny > 0.70:
         return "تحت " + h
     return h
 
-def describe_with_gemini(image, yolo_description):
-    """تحسين الوصف بـ Gemini مع تبديل المفاتيح والنماذج."""
+# --- 6. دالة تحسين الوصف بـ Gemini ---
+def enhance_description_with_gemini(yolo_description):
+    """تحسين الوصف باستخدام مدير المفاتيح المتعدد."""
+    if flux is None:
+        return None # العودة لوصف YOLO في حال عدم وجود مفاتيح
+
     prompt = f"""أنت مساعد بصري ذكي لمستخدم كفيف مصري.
 الوصف المبدئي من كشف الأشياء: "{yolo_description}"
-حلل الصورة واديني وصف نهائي بالعربي المصري، دقيق ومفيد.
-لو فيه أخطاء في الوصف المبدئي صححها.
-خلي الكلام طبيعي زي ما بتتكلم مع صاحبك، ومختصر."""
+حلل الوصف واديني جملة نهائية بالعربي المصري، دقيقة ومفيدة.
+لو فيه أخطاء في الوصف المبدئي صححها. خلي الكلام طبيعي ومختصر."""
 
-    for api_key in GEMINI_KEYS:
-        if not api_key:
-            continue
-        try:
-            client = genai.Client(api_key=api_key)
-            for model_name in GEMINI_MODELS:
-                for attempt in range(2):
-                    try:
-                        try:
-                            response = client.models.generate_content(
-                                model=model_name,
-                                contents=[prompt, image],
-                                config=types.GenerateContentConfig(
-                                    thinking_config=types.ThinkingConfig(thinking_budget=0)
-                                )
-                            )
-                        except Exception:
-                            response = client.models.generate_content(
-                                model=model_name,
-                                contents=[prompt, image]
-                            )
-                        return response.text
-                    except Exception as e:
-                        error_str = str(e)
-                        if "503" in error_str or "429" in error_str or "UNAVAILABLE" in error_str:
-                            time.sleep(1)
-                            continue
-                        else:
-                            break
-        except Exception:
-            continue
-    return None
+    try:
+        response = flux.generate(prompt)
+        return response["response"]
+    except Exception:
+        return None # العودة لوصف YOLO في حال فشل كل المحاولات
 
+# --- 7. دالة تحويل النص إلى صوت مصري ---
+def text_to_speech(text):
+    """توليد صوت باللهجة المصرية باستخدام Cairo-TTS."""
+    try:
+        # توليد مصفوفة الصوت
+        audio_array = tts.generate(text)
+        # تحويلها إلى صيغة WAV قابلة للتشغيل في المتصفح
+        audio_bytes = io.BytesIO()
+        sf.write(audio_bytes, audio_array, 24000, format='WAV')
+        audio_bytes.seek(0)
+        return audio_bytes
+    except Exception as e:
+        st.error(f"حدث خطأ في توليد الصوت: {e}")
+        return None
 
-# ═══════════ واجهة Streamlit ═══════════
-st.set_page_config(page_title="بصيرة", page_icon="👁️", layout="centered")
+# --- 8. واجهة Streamlit والتنسيق ---
+st.set_page_config(page_title="بصيرة", page_icon="👁️", layout="wide")
 
-# CSS عشان الواجهة تبقى أكبر وأوضح
+# CSS لجعل الصفحة كلها كاميرا وإخفاء العناصر غير الضرورية
 st.markdown("""
 <style>
-    .big-title { font-size: 2.5rem; font-weight: bold; text-align: center; margin: 1rem 0; }
+    #MainMenu, header, footer {visibility: hidden;}
+    .block-container {padding: 0 !important; max-width: 100% !important;}
+    div[data-testid="stCameraInputLive"] video {
+        width: 100vw !important;
+        height: 100vh !important;
+        object-fit: cover !important;
+    }
     .result-box {
-        font-size: 1.6rem;
-        padding: 1.5rem;
-        background-color: #d4edda;
-        border-radius: 15px;
-        border: 3px solid #28a745;
+        position: fixed;
+        bottom: 20px; left: 20px; right: 20px;
+        z-index: 9999;
+        font-size: 1.5rem; padding: 1rem;
+        background-color: rgba(212, 237, 218, 0.95);
+        border-radius: 15px; border: 3px solid #28a745;
         text-align: center;
-        margin: 1.5rem 0;
-        line-height: 1.6;
-    }
-    .welcome-box {
-        font-size: 1.2rem;
-        padding: 1rem;
-        background-color: #e3f2fd;
-        border-radius: 10px;
-        text-align: center;
-        margin: 1rem 0;
-    }
-    div[data-testid="stCameraInput"] button {
-        font-size: 1.3rem !important;
-        padding: 1rem 2rem !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="big-title">👁️ بصيرة</div>', unsafe_allow_html=True)
-
-# ترحيب مرة واحدة
+# --- 9. الترحيب الصوتي (مرة واحدة فقط) ---
 if "welcomed" not in st.session_state:
-    welcome_text = "أهلاً بيك في بصيرة. اضغط على زرار الكاميرا، وصور أي حاجة قدامك، وأنا هقولك هي إيه وفين."
+    welcome_text = "أهلاً بيك في بصيرة. الكاميرا شغالة، صور أي حاجة قدامك وأنا هقولك هي إيه وفين."
     welcome_audio = text_to_speech(welcome_text)
     if welcome_audio:
-        st.audio(welcome_audio, format='audio/mp3', autoplay=True)
-    st.markdown(f'<div class="welcome-box">{welcome_text}</div>', unsafe_allow_html=True)
+        st.audio(welcome_audio, format='audio/wav', autoplay=True)
     st.session_state.welcomed = True
 
-# الكاميرا بس
-st.markdown("### 📷 صور اللي قدامك")
-camera_image = st.camera_input("صور", label_visibility="collapsed")
+# --- 10. الكاميرا المفتوحة تلقائيًا ---
+# ملاحظة: specific facing_mode="environment" قد لا يكون مدعومًا في هذه المكتبة.
+# الكود التالي سيحاول فتح الكاميرا الافتراضية (غالبًا الخلفية على الموبايل).
+image = camera_input_live(key="camera_live", show_controls=False)
 
-if camera_image is not None:
-    image = Image.open(camera_image)
-    if image.mode != 'RGB':
-        image = image.convert('RGB')
+# --- 11. المعالجة عند توفر صورة ---
+if image is not None:
+    pil_image = Image.open(image)
+    if pil_image.mode != 'RGB':
+        pil_image = pil_image.convert('RGB')
 
     with st.spinner("بصيرة بيشوف الصورة..."):
-        # YOLO
-        results = model(image, verbose=False, conf=0.15)[0]
-        img_w, img_h = image.size
+        # كشف الأشياء
+        results = model(pil_image, verbose=False, conf=0.15)[0]
+        img_w, img_h = pil_image.size
 
-        # جمع الأشياء مع الاتجاه (بدون تكرار)
+        # جمع الأشياء مع تحديد الاتجاه (بدون تكرار)
         seen = {}
         for box in results.boxes:
             cls_id = int(box.cls.item())
@@ -183,19 +169,19 @@ if camera_image is not None:
             seen[name] = f"{arabic_name} {position}"
 
         if not seen:
-            yolo_description = "مش شايف حاجة واضحة في الصورة. جرب تصور تاني وإضاءة أحسن."
+            yolo_description = "مش شايف حاجة واضحة. جرب تقرب شوية."
         else:
             yolo_description = "أنا شايف: " + "، و".join(seen.values())
 
-        # Gemini (لو فشل، نستخدم YOLO)
-        final_description = describe_with_gemini(image, yolo_description)
+        # تحسين الوصف بـ Gemini
+        final_description = enhance_description_with_gemini(yolo_description)
         if final_description is None:
-            final_description = yolo_description
+            final_description = yolo_description # استخدام وصف YOLO كخطة بديلة
 
-        # عرض النتيجة بشكل كبير
+        # عرض النتيجة في صندوق فوق الكاميرا
         st.markdown(f'<div class="result-box">{final_description}</div>', unsafe_allow_html=True)
 
-        # الصوت
+        # تشغيل الصوت المصري
         result_audio = text_to_speech(final_description)
         if result_audio:
-            st.audio(result_audio, format='audio/mp3', autoplay=True)
+            st.audio(result_audio, format='audio/wav', autoplay=True)
