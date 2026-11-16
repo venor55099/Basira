@@ -1,8 +1,6 @@
 streamlit
-streamlit-camera-input-live
 ultralytics
 pillow
 numpy
-cairo-tts
-soundfile
-gemini-flux
+gTTS
+google-genai
