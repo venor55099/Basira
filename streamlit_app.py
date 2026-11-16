@@ -8,16 +8,16 @@ import time
 from google import genai
 from google.genai import types
 
-# --- إعداد Gemini ---
+# --- إعداد Gemini (مفتاحين احتياطيين) ---
 GEMINI_KEYS = [
     st.secrets.get("GEMINI_API_KEY", os.environ.get("GEMINI_API_KEY")),
-    st.secrets.get("GEMINI_API_KEY_2", None),  # مفتاح احتياطي
+    st.secrets.get("GEMINI_API_KEY_2", None),
 ]
 
 GEMINI_MODELS = [
     "gemini-2.5-flash-lite",
-    "gemini-2.5-flash",
     "gemini-2.0-flash-lite",
+    "gemini-2.5-flash",
 ]
 
 @st.cache_resource
@@ -35,13 +35,12 @@ translations = {
     "banana": "موزة", "apple": "تفاحة", "orange": "برتقالة",
     "spoon": "معلقة", "fork": "شوكة", "knife": "سكينة",
     "bed": "سرير", "toilet": "حمام", "tv": "تليفزيون",
-    "microwave": "ميكروويف", "oven": "فرن", "sink": "حوض",
 }
 
 def text_to_speech(text):
-    """تحويل النص لصوت وإرجاع bytes."""
+    """تحويل النص لصوت باللهجة المصرية."""
     try:
-        tts = gTTS(text=text, lang='ar', slow=False)
+        tts = gTTS(text=text, lang='ar', tld='com.eg', slow=False)
         audio_bytes = io.BytesIO()
         tts.write_to_fp(audio_bytes)
         audio_bytes.seek(0)
@@ -50,7 +49,7 @@ def text_to_speech(text):
         return None
 
 def describe_with_gemini(image, yolo_description):
-    """تحسين وصف YOLO باستخدام Gemini مع مفاتيح ونماذج احتياطية."""
+    """تحسين وصف YOLO باستخدام Gemini مع تبديل النماذج والمفاتيح."""
     prompt = f"""أنت مساعد بصري ذكي لمستخدم كفيف.
 وصف مبدئي من نظام كشف الأشياء: "{yolo_description}"
 حلل الصورة دي واديني وصف نهائي بالعربي، دقيق ومفيد.
@@ -87,25 +86,27 @@ def describe_with_gemini(image, yolo_description):
                             break
         except Exception:
             continue
-
-    return None  # Gemini فشل تمامًا
+    return None
 
 
 # --- واجهة Streamlit ---
 st.set_page_config(page_title="بصيرة", page_icon="👁️", layout="centered")
-
 st.title("👁️ بصيرة — المساعد البصري الذكي")
 
-# --- تعليمات صوتية أول ما التطبيق يفتح ---
+# ═══════════════════════════════════════════════════════════
+# الترحيب: صوت واحد بس، مرة واحدة فقط، أول ما التطبيق يفتح
+# ═══════════════════════════════════════════════════════════
 if "welcomed" not in st.session_state:
-    welcome_text = "أهلاً بيك في بصيرة. المساعد البصري الذكي. عشان تستخدمني، اضغط على زرار الكاميرا، وصور أي حاجة قدامك، وأنا هقولك هي إيه."
+    welcome_text = "أهلاً بيك في بصيرة. اضغط على زرار الكاميرا، وصور أي حاجة قدامك، وأنا هقولك هي إيه."
     welcome_audio = text_to_speech(welcome_text)
     if welcome_audio:
         st.audio(welcome_audio, format='audio/mp3', autoplay=True)
-    st.info(welcome_text)
     st.session_state.welcomed = True
+    st.info(welcome_text)
 
-# --- اختيار طريقة إدخال الصورة ---
+# ═══════════════════════════════════════════════════════════
+# اختيار طريقة التصوير (نص بس — مفيش صوت تلقائي هنا)
+# ═══════════════════════════════════════════════════════════
 st.subheader("📸 اختار طريقة التصوير")
 input_method = st.radio(
     "اختار طريقة إدخال الصورة:",
@@ -116,14 +117,12 @@ input_method = st.radio(
 image = None
 
 if input_method == "📷 الكاميرا (صور دلوقتي)":
-    # تعليمات صوتية للكاميرا
-    instruction = "اضغط على زرار تصوير الصورة اللي تحت، وصور اللي قدامك."
-    st.write(instruction)
-    if "cam_instr" not in st.session_state:
-        audio = text_to_speech(instruction)
-        if audio:
-            st.audio(audio, format='audio/mp3', autoplay=True)
-        st.session_state.cam_instr = True
+    st.write("اضغط على زرار تصوير الصورة اللي تحت، وصور اللي قدامك.")
+    # زرار اسمع التعليمات (اختياري — المستخدم يضغط لو حب)
+    if st.button("🔊 اسمع التعليمات"):
+        instr_audio = text_to_speech("اضغط على زرار تصوير الصورة اللي تحت، وصور اللي قدامك.")
+        if instr_audio:
+            st.audio(instr_audio, format='audio/mp3', autoplay=True)
     
     camera_image = st.camera_input("صور اللي قدامك")
     if camera_image is not None:
@@ -133,50 +132,35 @@ else:
     if uploaded_file is not None:
         image = Image.open(uploaded_file)
 
-# --- معالجة الصورة ---
+# ═══════════════════════════════════════════════════════════
+# معالجة الصورة — الصوت الوحيد اللي يشتغل هنا هو صوت النتيجة
+# ═══════════════════════════════════════════════════════════
 if image is not None:
     if image.mode != 'RGB':
         image = image.convert('RGB')
-    
     st.image(image, caption="الصورة اللي رفعتها", use_column_width=True)
-    
+
     with st.spinner("بصيرة بيشوف الصورة..."):
-        # صوت: جاري التحليل
-        analyzing_text = "لحظة، بصيرة بيشوف الصورة."
-        analyzing_audio = text_to_speech(analyzing_text)
-        if analyzing_audio:
-            st.audio(analyzing_audio, format='audio/mp3', autoplay=True)
-        
         # YOLO
         results = model(image, verbose=False, conf=0.15)[0]
         names = [model.names[int(c)] for c in results.boxes.cls]
         unique = list(dict.fromkeys(names))
-        
-        # معلومات تشخيصية
-        with st.expander("🔍 تفاصيل تقنية"):
-            st.write(f"عدد الأشياء المكتشفة: {len(results.boxes)}")
-            for box in results.boxes:
-                cls_id = int(box.cls.item())
-                conf = float(box.conf.item())
-                st.write(f"- {model.names[cls_id]}: ثقة {conf:.2f}")
-        
+
         if not unique:
             yolo_description = "مش شايف حاجة واضحة في الصورة دي. جرب تصور تاني وإضاءة أحسن."
         else:
             arabic = [translations.get(n, n) for n in unique]
             yolo_description = "أنا شايف: " + "، ".join(arabic)
-        
+
         # Gemini
         final_description = describe_with_gemini(image, yolo_description)
-        
         if final_description is None:
-            # Gemini فشل — نستخدم وصف YOLO
-            final_description = yolo_description + " (الوصف التفصيلي غير متاح حاليًا، بس ده اللي شايفه)"
-        
+            final_description = yolo_description
+
         # عرض النتيجة
         st.success(final_description)
-        
-        # صوت النتيجة
+
+        # صوت النتيجة — الصوت الوحيد اللي يشتغل هنا
         result_audio = text_to_speech(final_description)
         if result_audio:
             st.audio(result_audio, format='audio/mp3', autoplay=True)
